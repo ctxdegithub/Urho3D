@@ -27,8 +27,9 @@
 #
 # Target architecture:
 #  ARM
-#  RPI
+#  MIPS
 #  POWERPC
+#  X86
 #
 # Compiler version in major.minor.patch format, except MSVC where it follows its own format:
 #  COMPILER_VERSION
@@ -44,6 +45,19 @@
 #  HAVE_NEON
 #  NEON
 #
+# C++ features:
+#  RTTI
+#  EXCEPTIONS
+#
+
+if (INVALIDATE_CCT)
+    get_cmake_property (CACHE_VARIABLES CACHE_VARIABLES)
+    foreach (VAR ${CACHE_VARIABLES})
+        if (VAR MATCHES ^CCT_)
+            unset (${VAR} CACHE)
+        endif ()
+    endforeach ()
+endif ()
 
 if (NOT MSVC AND NOT DEFINED CCT_NATIVE_PREDEFINED_MACROS)
     if (IOS OR TVOS)
@@ -85,6 +99,8 @@ if (MSVC)
     # TODO: revisit this later because VS may use Clang as compiler in the future
     # On MSVC compiler, use the chosen CMake/VS generator to determine the ABI
     set (NATIVE_64BIT ${CMAKE_CL_64})
+    # We only support one target arch when using MSVC for now
+    set (X86 1)
     # Determine MSVC compiler version based on CMake informational variables
     set (COMPILER_VERSION ${MSVC_VERSION})
 else ()
@@ -95,7 +111,10 @@ else ()
     endif ()
     # Android arm64 compiler only emits __aarch64__ while iOS arm64 emits __aarch64__, __arm64__, and __arm__; for armv7a all emit __arm__
     check_native_define ("__(arm|aarch64)__" ARM)
-    # For completeness sake as currently we do not support PowerPC (yet)
+    # Compiler should emit __x86_64__, __i686__, or __i386__, etc when targeting archs using Intel or AMD processors
+    check_native_define ("__(i.86|x86_64)__" X86)
+    # For completeness sake as currently we do not support MIPS and PowerPC (yet)
+    check_native_define ("__MIPSEL__" MIPS)
     check_native_define ("__(ppc|PPC|powerpc|POWERPC)(64)*__" POWERPC)
     # GCC/Clang and all their derivatives should understand this command line option to get the compiler version
     if (NOT DEFINED COMPILER_VERSION)
@@ -132,18 +151,18 @@ macro (check_extension EXTENSION)
     set (HAVE_${UCASE_EXT_NAME} ${CCT_HAVE_${UCASE_EXT_NAME}})
 endmacro ()
 
-macro (check_extension_enabled EXTENSION)
-    if (NOT DEFINED CCT_${EXTENSION})
-        set (COMPILER_FLAGS ${CMAKE_C_FLAGS})
+macro (check_feature_enabled FEATURE)
+    if (NOT DEFINED CCT_${FEATURE})
+        set (COMPILER_FLAGS ${CMAKE_CXX_FLAGS})
         separate_arguments (COMPILER_FLAGS)
-        execute_process (COMMAND ${CMAKE_C_COMPILER} ${COMPILER_FLAGS} -E -dM -xc ${NULL_DEVICE} RESULT_VARIABLE CC_EXIT_STATUS OUTPUT_VARIABLE PREDEFINED_MACROS ERROR_QUIET)
-        if (NOT CC_EXIT_STATUS EQUAL 0)
+        execute_process (COMMAND ${CMAKE_CXX_COMPILER} ${COMPILER_FLAGS} -E -dM -xc++ ${NULL_DEVICE} RESULT_VARIABLE CXX_EXIT_STATUS OUTPUT_VARIABLE PREDEFINED_MACROS ERROR_QUIET)
+        if (NOT CXX_EXIT_STATUS EQUAL 0)
             message (FATAL_ERROR "Could not check compiler toolchain CPU instruction extension as it does not handle '-E -dM' compiler flags correctly")
         endif ()
         if (NOT ${ARGN} STREQUAL "")
             set (EXPECTED_MACRO ${ARGN})
         else ()
-            set (EXPECTED_MACRO __${EXTENSION}__)
+            set (EXPECTED_MACRO __${FEATURE})
         endif ()
         string (REGEX MATCH "#define +${EXPECTED_MACRO} +1" matched "${PREDEFINED_MACROS}")
         if (matched)
@@ -151,16 +170,16 @@ macro (check_extension_enabled EXTENSION)
         else ()
             set (matched 0)
         endif ()
-        set (CCT_${EXTENSION} ${matched} CACHE INTERNAL "Is ${EXTENSION} enabled")
+        set (CCT_${FEATURE} ${matched} CACHE INTERNAL "Is ${FEATURE} enabled")
     endif ()
-    set (${EXTENSION} ${CCT_${EXTENSION}})
+    set (${FEATURE} ${CCT_${FEATURE}})
 endmacro ()
 
 if (ARM)
     if (MSVC)
         message (FATAL_ERROR "This build system does not support ARM build using MSVC compiler toolchain yet. Contribution is welcome.")
     else ()
-        check_extension_enabled (NEON __ARM_NEON)
+        check_feature_enabled (NEON __ARM_NEON)
         if (NEON)
             set (HAVE_NEON 1)
         else ()
@@ -193,6 +212,8 @@ else ()
         check_extension (altivec)
     endif ()
 endif ()
+check_feature_enabled (RTTI __GXX_RTTI)
+check_feature_enabled (EXCEPTIONS)
 
 # Explicitly set the variable to 1 when it is defined and truthy or 0 when it is not defined or falsy
 foreach (VAR NATIVE_64BIT HAVE_MMX HAVE_3DNOW HAVE_SSE HAVE_SSE2 HAVE_ALTIVEC HAVE_NEON NEON)
